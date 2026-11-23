@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: khadi-gramodyog-billing
+    runtime: static
+    buildCommand: npm ci && npm run build
+    staticPublishPath: out
+    envVars:
+      - key: NEXT_PUBLIC_SUPABASE_URL
+        sync: false
+      - key: NEXT_PUBLIC_SUPABASE_ANON_KEY
+        sync: false
