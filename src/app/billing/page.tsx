@@ -13,8 +13,9 @@ import {
   Trash2,
   User,
   Wallet,
+  X,
 } from 'lucide-react';
-import { PAYMENT_LABELS, unitLabel, useApp } from '@/lib/app-context';
+import { PAYMENT_LABELS, UNITS, unitLabel, useApp } from '@/lib/app-context';
 import { rpc, supabase } from '@/lib/supabase';
 import type { CartLine, PaymentMode, StockRow, TransactionDetail } from '@/lib/types';
 import { money, moneyDual, round2 } from '@/lib/format';
@@ -53,6 +54,17 @@ export default function BillingPage() {
   ]);
 
   const [cameraOpen, setCameraOpen] = useState(false);
+  const [customModalOpen, setCustomModalOpen] = useState(false);
+  const [customForm, setCustomForm] = useState({
+    name_hi: '',
+    name_en: '',
+    category_id: '',
+    rate: '',
+    quantity: '1',
+    unit: 'piece',
+    saveToCatalog: false,
+  });
+  const [customBusy, setCustomBusy] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState('');
   const [scanNotice, setScanNotice] = useState('');
@@ -222,6 +234,100 @@ export default function BillingPage() {
     clearCartDraft();
   };
 
+  const openCustomModal = (prefillName = '') => {
+    const activeCats = categories.filter((c) => c.is_active);
+    const defaultCat = catFilter !== 'all' ? catFilter : activeCats[0]?.id || categories[0]?.id || '';
+    setCustomForm({
+      name_hi: prefillName,
+      name_en: '',
+      category_id: defaultCat,
+      rate: '',
+      quantity: '1',
+      unit: 'piece',
+      saveToCatalog: false,
+    });
+    setErr('');
+    setCustomModalOpen(true);
+  };
+
+  const handleAddCustomItem = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const rateNum = Number(customForm.rate);
+    const qtyNum = Number(customForm.quantity);
+    if (!customForm.name_hi.trim() || !customForm.category_id || !(rateNum >= 0) || !(qtyNum > 0)) {
+      return;
+    }
+
+    if (customForm.saveToCatalog && online) {
+      setCustomBusy(true);
+      try {
+        const newId = await rpc<string>('save_product', {
+          p: {
+            name_hi: customForm.name_hi.trim(),
+            name_en: customForm.name_en.trim(),
+            category_id: customForm.category_id,
+            selling_price: rateNum,
+            unit: customForm.unit,
+            opening_stock: qtyNum,
+            min_stock: 0,
+            gst_rate: 0,
+            is_active: true,
+          },
+        });
+        await loadProducts();
+        setLines((prev) => [
+          ...prev,
+          {
+            key: crypto.randomUUID(),
+            product_id: newId,
+            product_code: 'NEW',
+            barcode: null,
+            name_hi: customForm.name_hi.trim(),
+            name_en: customForm.name_en.trim(),
+            category_id: customForm.category_id,
+            unit: customForm.unit,
+            list_price: rateNum,
+            rate: rateNum,
+            quantity: qtyNum,
+            discount: 0,
+            gst_rate: 0,
+            available: qtyNum,
+          },
+        ]);
+        setCustomModalOpen(false);
+        setSearch('');
+      } catch (ex) {
+        setErr(errorMessage(ex, lang));
+      } finally {
+        setCustomBusy(false);
+      }
+      return;
+    }
+
+    setLines((prev) => [
+      ...prev,
+      {
+        key: crypto.randomUUID(),
+        product_id: null,
+        product_code: 'UNLISTED',
+        barcode: null,
+        name_hi: customForm.name_hi.trim(),
+        name_en: customForm.name_en.trim(),
+        category_id: customForm.category_id,
+        unit: customForm.unit,
+        list_price: rateNum,
+        rate: rateNum,
+        quantity: qtyNum,
+        discount: 0,
+        gst_rate: 0,
+        available: 999999,
+        is_custom: true,
+      },
+    ]);
+    setCustomModalOpen(false);
+    setSearch('');
+  };
+
   const handleGenerateBill = async () => {
     if (submitting || lines.length === 0) return;
     setErr('');
@@ -241,6 +347,10 @@ export default function BillingPage() {
       customer,
       items: lines.map((l) => ({
         product_id: l.product_id,
+        category_id: l.category_id,
+        name_hi: l.name_hi,
+        name_en: l.name_en,
+        unit: l.unit,
         quantity: l.quantity,
         rate: l.rate,
         discount: l.discount,
@@ -325,6 +435,14 @@ export default function BillingPage() {
             </div>
             <button
               type="button"
+              onClick={() => openCustomModal(search.trim())}
+              className="flex items-center gap-1.5 rounded-xl bg-leaf-600 px-3.5 py-2.5 text-sm font-bold text-white hover:bg-leaf-700"
+            >
+              <Plus className="h-5 w-5" />
+              <span className="hidden sm:inline">{L('अनलिस्टेड सामान', 'Unlisted Item')}</span>
+            </button>
+            <button
+              type="button"
               onClick={() => setCameraOpen(true)}
               className="flex items-center gap-1.5 rounded-xl bg-khadi-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-khadi-700"
             >
@@ -382,8 +500,18 @@ export default function BillingPage() {
               ))}
             </div>
           ) : filteredProducts.length === 0 ? (
-            <div className="py-12 text-center text-stone-500">
-              {L('कोई उत्पाद नहीं मिला', 'No matching products')}
+            <div className="py-12 text-center text-stone-500 space-y-3">
+              <p>{L('कोई सूचीबद्ध उत्पाद नहीं मिला', 'No matching listed products')}</p>
+              <button
+                type="button"
+                onClick={() => openCustomModal(search.trim())}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-leaf-600 px-4 py-2 text-sm font-bold text-white hover:bg-leaf-700"
+              >
+                <Plus className="h-4 w-4" />
+                {search.trim()
+                  ? L(`"${search.trim()}" को अनलिस्टेड सामान के रूप में जोड़ें`, `Add "${search.trim()}" as unlisted item`)
+                  : L('अनलिस्टेड सामान जोड़ें', 'Add Unlisted Item')}
+              </button>
             </div>
           ) : (
             <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-4">
@@ -544,6 +672,11 @@ export default function BillingPage() {
                           style={{ backgroundColor: cat?.color || '#d98b1c' }}
                         />
                         <span className="truncate text-sm font-bold text-stone-900">{l.name_hi}</span>
+                        {(l.is_custom || !l.product_id) && (
+                          <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800">
+                            {L('अनलिस्टेड', 'Unlisted')}
+                          </span>
+                        )}
                       </div>
                       <div className="text-[11px] text-stone-500">
                         {cat?.name_hi} • {unitLabel(l.unit, lang)}
@@ -592,7 +725,7 @@ export default function BillingPage() {
 
                     <div className="flex items-center gap-2 text-xs">
                       <span className="text-stone-400">×</span>
-                      {canEditPrice ? (
+                      {canEditPrice || !l.product_id ? (
                         <input
                           type="number"
                           min="0"
@@ -781,6 +914,114 @@ export default function BillingPage() {
         onClose={() => setCameraOpen(false)}
         onDetected={handleBarcodeScan}
       />
+
+      {/* Unlisted / Custom Item Modal */}
+      {customModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl">
+            <div className="flex items-center justify-between border-b pb-3">
+              <h2 className="text-lg font-bold text-stone-900">
+                {L('अनलिस्टेड / नया सामान जोड़ें', 'Add Unlisted Item to Bill')}
+              </h2>
+              <button type="button" onClick={() => setCustomModalOpen(false)} className="rounded-lg p-1 hover:bg-stone-100">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <form onSubmit={handleAddCustomItem} className="mt-4 space-y-3">
+              <div>
+                <label className="text-xs font-bold text-stone-700">{L('सामान का नाम (हिंदी) *', 'Item Name *')}</label>
+                <input
+                  required
+                  autoFocus
+                  value={customForm.name_hi}
+                  onChange={(e) => setCustomForm((f) => ({ ...f, name_hi: e.target.value }))}
+                  placeholder={L('उदा. खादी कुर्ता / विशेष कपड़ा', 'e.g. Khadi Kurta')}
+                  className="mt-1 w-full rounded-xl border border-stone-300 px-3 py-2 text-sm font-semibold"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-bold text-stone-700">{L('श्रेणी (रसीद के लिए) *', 'Category (for receipt) *')}</label>
+                <select
+                  required
+                  value={customForm.category_id}
+                  onChange={(e) => setCustomForm((f) => ({ ...f, category_id: e.target.value }))}
+                  className="mt-1 w-full rounded-xl border border-stone-300 px-3 py-2 text-sm font-semibold"
+                >
+                  {categories.filter((c) => c.is_active).map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name_hi} ({c.name_en})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="text-xs font-bold text-stone-700">{L('दर (₹) *', 'Rate (₹) *')}</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    required
+                    value={customForm.rate}
+                    onChange={(e) => setCustomForm((f) => ({ ...f, rate: e.target.value }))}
+                    className="mt-1 w-full rounded-xl border border-stone-300 px-3 py-2 text-sm font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-stone-700">{L('मात्रा *', 'Qty *')}</label>
+                  <input
+                    type="number"
+                    step="any"
+                    min="0.001"
+                    required
+                    value={customForm.quantity}
+                    onChange={(e) => setCustomForm((f) => ({ ...f, quantity: e.target.value }))}
+                    className="mt-1 w-full rounded-xl border border-stone-300 px-3 py-2 text-sm font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-stone-700">{L('इकाई', 'Unit')}</label>
+                  <select
+                    value={customForm.unit}
+                    onChange={(e) => setCustomForm((f) => ({ ...f, unit: e.target.value }))}
+                    className="mt-1 w-full rounded-xl border border-stone-300 px-2 py-2 text-sm"
+                  >
+                    {UNITS.map((u) => (
+                      <option key={u.code} value={u.code}>
+                        {u.hi}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <label className="flex items-center gap-2 pt-1 text-xs font-semibold text-stone-700">
+                <input
+                  type="checkbox"
+                  checked={customForm.saveToCatalog}
+                  onChange={(e) => setCustomForm((f) => ({ ...f, saveToCatalog: e.target.checked }))}
+                />
+                {L('इसे उत्पाद मास्टर सूची में भी सहेजें', 'Also save to Product Master list')}
+              </label>
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setCustomModalOpen(false)}
+                  className="rounded-xl border px-4 py-2 text-sm font-semibold"
+                >
+                  {L('रद्द करें', 'Cancel')}
+                </button>
+                <button
+                  type="submit"
+                  disabled={customBusy}
+                  className="rounded-xl bg-leaf-600 px-5 py-2 text-sm font-bold text-white hover:bg-leaf-700 disabled:opacity-50"
+                >
+                  {customBusy ? '...' : L('कार्ट में जोड़ें', 'Add to Cart')}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       <ReceiptModal detail={completedDetail} onClose={() => setCompletedDetail(null)} />
     </div>

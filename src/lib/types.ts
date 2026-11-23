@@ -105,7 +105,7 @@ export interface StockRow {
 
 export interface CartLine {
   key: string; // local line id
-  product_id: string;
+  product_id: string | null; // null for unlisted / custom items
   product_code: string;
   barcode: string | null;
   name_hi: string;
@@ -118,6 +118,7 @@ export interface CartLine {
   discount: number;
   gst_rate: number;
   available: number;
+  is_custom?: boolean;
 }
 
 export interface TransactionRow {
@@ -153,7 +154,7 @@ export interface TransactionItem {
   transaction_id: string;
   receipt_id: string;
   category_id: string;
-  product_id: string;
+  product_id: string | null;
   line_no: number;
   product_code: string;
   product_name_hi: string;

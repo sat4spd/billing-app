@@ -46,11 +46,12 @@ async function main() {
     do $$ begin create role authenticated nologin; exception when duplicate_object then null; end $$;
   `);
 
-  // Apply migrations 0001 - 0003
-  console.log('Applying migrations 0001 - 0003...');
+  // Apply migrations 0001 - 0005
+  console.log('Applying migrations 0001 - 0005...');
   await db.exec(readSql('20261123000001_schema.sql'));
   await db.exec(readSql('20261123000002_functions.sql'));
   await db.exec(readSql('20261123000003_rls_seed.sql'));
+  await db.exec(readSql('20261123000005_unlisted_items.sql'));
 
   const ADMIN_ID = '11111111-1111-1111-1111-111111111111';
   const EMP_ID = '22222222-2222-2222-2222-222222222222';
@@ -330,6 +331,39 @@ async function main() {
         }),
       /CUSTOMER_REQUIRED_FOR_CREDIT/,
     );
+  });
+
+  await test('Unlisted item: employee can bill unlisted item alongside listed item & cancel cleanly', async () => {
+    const res = await rpc(EMP_ID, 'create_bill', {
+      p: {
+        idempotency_key: 'cccccccc-cccc-cccc-cccc-ccccccccccc1',
+        customer: { name: 'राजू' },
+        items: [
+          { product_id: woolId, quantity: 1 },
+          {
+            product_id: null,
+            category_id: catByCode.khadi,
+            name_hi: 'विशेष खादी कुर्ता',
+            unit: 'piece',
+            quantity: 2,
+            rate: 750,
+          },
+        ],
+        payments: [{ mode: 'cash', amount: 3500, reference: '' }],
+      },
+    });
+    const detail = await rpc(EMP_ID, 'get_transaction_detail', { p_id: res.id });
+    assert.equal(detail.receipts.length, 2);
+    assert.equal(Number(detail.transaction.total_amount), 3500);
+    const khadiR = detail.receipts.find((r) => r.category_id === catByCode.khadi);
+    assert.equal(khadiR.items[0].product_name_hi, 'विशेष खादी कुर्ता');
+    assert.equal(khadiR.items[0].product_id, null);
+
+    // Cancel as admin -> should restore woolId stock and skip restock for unlisted item
+    const req = await rpc(ADMIN_ID, 'request_return', {
+      p: { transaction_id: res.id, type: 'cancellation', reason: 'test', auto_approve: true },
+    });
+    assert.ok(req.id);
   });
 
   console.log(`\nDB Test Summary: ${passed} passed, ${failed} failed`);

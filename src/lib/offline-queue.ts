@@ -4,7 +4,16 @@ export interface PendingBillPayload {
   idempotency_key: string;
   created_at: string;
   customer: { name: string; mobile: string; address: string; type: string };
-  items: { product_id: string; quantity: number; rate: number; discount: number }[];
+  items: {
+    product_id: string | null;
+    category_id?: string;
+    name_hi?: string;
+    name_en?: string;
+    unit?: string;
+    quantity: number;
+    rate: number;
+    discount: number;
+  }[];
   bill_discount: number;
   payments: { mode: PaymentMode; amount: number; reference: string }[];
   allocation?: { category_id: string; amount: number }[];
