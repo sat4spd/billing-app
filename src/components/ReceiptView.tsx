@@ -75,6 +75,15 @@ export function ReceiptCard({
     return `${toHindiDigits(en)}`;
   };
 
+  const formatPct = (disc: number, base: number) => {
+    if (!base || disc <= 0) return '0';
+    const p = Math.round(((disc / base) * 100) * 100) / 100;
+    const s = Number.isInteger(p) ? String(p) : p.toFixed(1).replace(/\.0$/, '');
+    return numStyle === 'hindi' ? toHindiDigits(s) : s;
+  };
+
+  const receiptNetBeforeBillDisc = Math.max(0, receipt.gross_amount - receipt.line_discount);
+
   const payLabel =
     PAYMENT_LABELS[transaction.payment_mode]?.hi || transaction.payment_mode;
 
@@ -200,11 +209,6 @@ export function ReceiptCard({
                       {!isThermal && item.product_name_en && (
                         <div className="text-[0.78em] text-stone-700">{item.product_name_en}</div>
                       )}
-                      {item.discount > 0 && (
-                        <div className="text-[0.75em] text-stone-700">
-                          छूट: -{sym}{formatCellNum(item.discount)}
-                        </div>
-                      )}
                     </td>
                     <td className="border-r border-stone-800 px-1.5 py-1 text-center whitespace-nowrap">
                       {numStyle === 'hindi' ? qty(item.quantity, 'hindi') : qty(item.quantity, 'english')}
@@ -215,8 +219,20 @@ export function ReceiptCard({
                     <td className="border-r border-stone-800 px-1.5 py-1 text-right whitespace-nowrap">
                       {formatCellNum(item.rate)}
                     </td>
-                    <td className="px-1.5 py-1 text-right font-semibold whitespace-nowrap">
-                      {formatCellNum(item.line_total)}
+                    <td className="px-1.5 py-1 text-right whitespace-nowrap">
+                      {item.discount > 0 ? (
+                        <div className="leading-tight">
+                          <div className="text-[0.76em] text-stone-600 line-through">
+                            {formatCellNum(item.quantity * item.rate)}
+                          </div>
+                          <div className="font-semibold">{formatCellNum(item.line_total)}</div>
+                          <div className="text-[0.72em] font-medium text-red-800">
+                            छूट {formatPct(item.discount, item.quantity * item.rate)}% (-{sym}{formatCellNum(item.discount)})
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="font-semibold">{formatCellNum(item.line_total)}</span>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -233,10 +249,20 @@ export function ReceiptCard({
                 {receipt.bill_discount > 0 && (
                   <tr className="border-t border-stone-700 bg-black/[0.02] text-[0.9em]">
                     <td colSpan={3} className="border-r border-stone-800 px-1.5 py-1 text-right font-semibold">
-                      बिल छूट (Discount)
+                      बिल छूट (Discount {formatPct(receipt.bill_discount, receiptNetBeforeBillDisc)}%)
                     </td>
-                    <td className="px-1.5 py-1 text-right font-semibold">
-                      -{formatCellNum(receipt.bill_discount)}
+                    <td className="px-1.5 py-1 text-right font-semibold text-red-800 whitespace-nowrap">
+                      -{sym}{formatCellNum(receipt.bill_discount)}
+                    </td>
+                  </tr>
+                )}
+                {(receipt.line_discount + receipt.bill_discount) > 0 && (
+                  <tr className="border-t border-stone-600 bg-black/[0.03] text-[0.84em]">
+                    <td colSpan={3} className="border-r border-stone-800 px-1.5 py-0.5 text-right font-semibold text-stone-700">
+                      कुल छूट ({formatPct(receipt.line_discount + receipt.bill_discount, receipt.gross_amount)}%)
+                    </td>
+                    <td className="px-1.5 py-0.5 text-right font-semibold text-stone-800 whitespace-nowrap">
+                      -{sym}{formatCellNum(receipt.line_discount + receipt.bill_discount)}
                     </td>
                   </tr>
                 )}
