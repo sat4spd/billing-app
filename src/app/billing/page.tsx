@@ -42,6 +42,8 @@ export default function BillingPage() {
   const [customer, setCustomer] = useState({ name: '', mobile: '', address: '', type: 'retail' });
   const [showCustomer, setShowCustomer] = useState(false);
   const [billDiscount, setBillDiscount] = useState(0);
+  const [billDiscountMode, setBillDiscountMode] = useState<'rs' | 'pct'>('rs');
+  const [billDiscountPct, setBillDiscountPct] = useState(0);
   const [notes, setNotes] = useState('');
 
   // Payment state
@@ -183,11 +185,28 @@ export default function BillingPage() {
   }, [products, search, catFilter]);
 
   // Cart math & category grouping preview
+  const lineDiscountRs = useCallback((l: CartLine) => {
+    const base = round2(l.quantity * l.rate);
+    if (l.discount_mode === 'pct') {
+      const pct = Math.min(100, Math.max(0, l.discount_pct || 0));
+      return round2((base * pct) / 100);
+    }
+    return Math.min(base, Math.max(0, l.discount || 0));
+  }, []);
+
   const subtotal = useMemo(
-    () => round2(lines.reduce((acc, l) => acc + round2(l.quantity * l.rate) - l.discount, 0)),
-    [lines],
+    () => round2(lines.reduce((acc, l) => acc + round2(l.quantity * l.rate) - lineDiscountRs(l), 0)),
+    [lines, lineDiscountRs],
   );
-  const grandTotal = Math.max(0, round2(subtotal - (billDiscount || 0)));
+  const effectiveBillDiscount = useMemo(() => {
+    if (billDiscountMode === 'pct') {
+      const pct = Math.min(100, Math.max(0, billDiscountPct || 0));
+      return round2((subtotal * pct) / 100);
+    }
+    return Math.min(subtotal, Math.max(0, billDiscount || 0));
+  }, [billDiscountMode, billDiscountPct, billDiscount, subtotal]);
+
+  const grandTotal = Math.max(0, round2(subtotal - effectiveBillDiscount));
 
   const categorySummary = useMemo(() => {
     const map = new Map<string, { id: string; name_hi: string; color: string; count: number; total: number }>();
@@ -201,11 +220,11 @@ export default function BillingPage() {
         total: 0,
       };
       cur.count += 1;
-      cur.total = round2(cur.total + round2(l.quantity * l.rate) - l.discount);
+      cur.total = round2(cur.total + round2(l.quantity * l.rate) - lineDiscountRs(l));
       map.set(l.category_id, cur);
     }
     return Array.from(map.values());
-  }, [lines, categories]);
+  }, [lines, categories, lineDiscountRs]);
 
   const effectivePaid = useMemo(() => {
     if (payMode === 'split') {
@@ -226,6 +245,8 @@ export default function BillingPage() {
     setLines([]);
     setCustomer({ name: '', mobile: '', address: '', type: 'retail' });
     setBillDiscount(0);
+    setBillDiscountMode('rs');
+    setBillDiscountPct(0);
     setNotes('');
     setPaidAmount('');
     setPayRef('');
@@ -353,9 +374,9 @@ export default function BillingPage() {
         unit: l.unit,
         quantity: l.quantity,
         rate: l.rate,
-        discount: l.discount,
+        discount: lineDiscountRs(l),
       })),
-      bill_discount: billDiscount || 0,
+      bill_discount: effectiveBillDiscount,
       payments: paymentsPayload,
       notes,
     };
@@ -661,7 +682,8 @@ export default function BillingPage() {
           ) : (
             lines.map((l) => {
               const cat = categories.find((c) => c.id === l.category_id);
-              const lineTotal = round2(l.quantity * l.rate) - l.discount;
+              const lineDisc = lineDiscountRs(l);
+              const lineTotal = round2(l.quantity * l.rate) - lineDisc;
               return (
                 <div key={l.key} className="p-2 space-y-1.5">
                   <div className="flex items-start justify-between gap-2">
@@ -746,14 +768,56 @@ export default function BillingPage() {
                   {canDiscount && (
                     <div className="flex items-center justify-end gap-1.5 text-xs">
                       <span className="text-stone-500">{L('छूट:', 'Disc:')}</span>
-                      <input
-                        type="number"
-                        min="0"
-                        value={l.discount || ''}
-                        onChange={(e) => updateLine(l.key, { discount: Math.max(0, Number(e.target.value) || 0) })}
-                        placeholder="0"
-                        className="w-16 rounded border border-stone-200 px-1.5 py-0.5 text-right text-xs"
-                      />
+                      <div className="inline-flex rounded border border-stone-200 bg-stone-50 p-0.5 text-[11px] font-bold">
+                        <button
+                          type="button"
+                          onClick={() => updateLine(l.key, { discount_mode: 'rs' })}
+                          className={`rounded px-1.5 py-0.5 ${
+                            (l.discount_mode || 'rs') === 'rs' ? 'bg-khadi-600 text-white' : 'text-stone-600'
+                          }`}
+                        >
+                          {sym}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => updateLine(l.key, { discount_mode: 'pct' })}
+                          className={`rounded px-1.5 py-0.5 ${
+                            l.discount_mode === 'pct' ? 'bg-khadi-600 text-white' : 'text-stone-600'
+                          }`}
+                        >
+                          %
+                        </button>
+                      </div>
+                      {l.discount_mode === 'pct' ? (
+                        <>
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            step="0.5"
+                            value={l.discount_pct || ''}
+                            onChange={(e) =>
+                              updateLine(l.key, {
+                                discount_pct: Math.min(100, Math.max(0, Number(e.target.value) || 0)),
+                              })
+                            }
+                            placeholder="0"
+                            className="w-14 rounded border border-stone-200 px-1.5 py-0.5 text-right text-xs font-semibold"
+                          />
+                          {lineDisc > 0 && (
+                            <span className="text-[11px] text-stone-500">(-{sym}{lineDisc})</span>
+                          )}
+                        </>
+                      ) : (
+                        <input
+                          type="number"
+                          min="0"
+                          value={l.discount || ''}
+                          onChange={(e) => updateLine(l.key, { discount: Math.max(0, Number(e.target.value) || 0) })}
+                          placeholder="0"
+                          className="w-16 rounded border border-stone-200 px-1.5 py-0.5 text-right text-xs font-semibold"
+                        />
+                      )}
                     </div>
                   )}
                 </div>
@@ -765,16 +829,62 @@ export default function BillingPage() {
         {/* Bottom: Totals, Payment & Generate Bill */}
         <div className="border-t border-khadi-200 bg-khadi-50/80 p-3 space-y-2.5">
           {canDiscount && (
-            <div className="flex items-center justify-between text-sm">
-              <span className="font-semibold text-stone-700">{L('बिल छूट (₹)', 'Bill Discount (₹)')}</span>
-              <input
-                type="number"
-                min="0"
-                value={billDiscount || ''}
-                onChange={(e) => setBillDiscount(Math.max(0, Number(e.target.value) || 0))}
-                placeholder="0"
-                className="w-24 rounded-lg border border-stone-300 bg-white px-2.5 py-1 text-right font-bold"
-              />
+            <div className="flex items-center justify-between gap-2 text-sm">
+              <div className="flex items-center gap-2">
+                <span className="font-semibold text-stone-700">{L('बिल छूट', 'Bill Discount')}</span>
+                <div className="inline-flex rounded-lg border border-stone-300 bg-white p-0.5 text-xs font-bold">
+                  <button
+                    type="button"
+                    onClick={() => setBillDiscountMode('rs')}
+                    className={`rounded-md px-2 py-0.5 ${
+                      billDiscountMode === 'rs' ? 'bg-khadi-600 text-white' : 'text-stone-600'
+                    }`}
+                  >
+                    {sym}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBillDiscountMode('pct')}
+                    className={`rounded-md px-2 py-0.5 ${
+                      billDiscountMode === 'pct' ? 'bg-khadi-600 text-white' : 'text-stone-600'
+                    }`}
+                  >
+                    %
+                  </button>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                {billDiscountMode === 'pct' ? (
+                  <>
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.5"
+                      value={billDiscountPct || ''}
+                      onChange={(e) =>
+                        setBillDiscountPct(Math.min(100, Math.max(0, Number(e.target.value) || 0)))
+                      }
+                      placeholder="0%"
+                      className="w-20 rounded-lg border border-stone-300 bg-white px-2.5 py-1 text-right font-bold"
+                    />
+                    {effectiveBillDiscount > 0 && (
+                      <span className="text-xs font-semibold text-stone-600">
+                        (-{sym}{effectiveBillDiscount})
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <input
+                    type="number"
+                    min="0"
+                    value={billDiscount || ''}
+                    onChange={(e) => setBillDiscount(Math.max(0, Number(e.target.value) || 0))}
+                    placeholder="0"
+                    className="w-24 rounded-lg border border-stone-300 bg-white px-2.5 py-1 text-right font-bold"
+                  />
+                )}
+              </div>
             </div>
           )}
 

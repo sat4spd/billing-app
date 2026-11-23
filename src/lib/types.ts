@@ -116,6 +116,8 @@ export interface CartLine {
   rate: number;
   quantity: number;
   discount: number;
+  discount_mode?: 'rs' | 'pct';
+  discount_pct?: number;
   gst_rate: number;
   available: number;
   is_custom?: boolean;
